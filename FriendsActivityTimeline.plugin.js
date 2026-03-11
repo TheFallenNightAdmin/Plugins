@@ -1,529 +1,439 @@
 /**
- * @name Friend Activity Timeline
+ * @name FriendActivityTimeline
  * @author pagoni meow
- * @description A floating overlay showing a live scrollable feed of everything your friends do — games, status changes, voice, and streams.
- * @version 1.0.0
+ * @description A live floating feed of everything your friends do — games, status changes, voice channels, and streams.
+ * @version 1.1.0
  */
 
 module.exports = class FriendActivityTimeline {
   constructor() {
     this.events = [];
     this.maxEvents = 100;
-    this.visible = true;
-    this.dragging = false;
-    this.dragOffX = 0;
-    this.dragOffY = 0;
     this.snapshots = new Map();
     this.pollTimer = null;
     this.POLL_MS = 5000;
-    this.settings = { x: null, y: null, opacity: 90, maxItems: 40, showGames: true, showStatus: true, showVoice: true, showStreams: true };
+    this.dragging = false;
+    this.dragOffX = 0;
+    this.dragOffY = 0;
+    this._onMouseMove = this._onMouseMove.bind(this);
+    this._onMouseUp   = this._onMouseUp.bind(this);
+    this.settings = {
+      x: null, y: null,
+      opacity: 90,
+      showGames: true, showStatus: true,
+      showVoice: true, showStreams: true,
+    };
   }
 
   getName()        { return "FriendActivityTimeline"; }
   getAuthor()      { return "pagoni meow"; }
-  getVersion()     { return "1.0.0"; }
-  getDescription() { return "Live floating feed of your friends' activity — games, status, voice, streams."; }
+  getVersion()     { return "1.1.0"; }
+  getDescription() { return "Live floating feed of your friends activity."; }
 
   load() {
     try {
-      const s = BdApi.getData("FriendActivityTimeline", "settings");
-      if (s) Object.assign(this.settings, s);
-    } catch (_) {}
+      const s = BdApi.Data.load("FriendActivityTimeline", "settings");
+      if (s && typeof s === "object") Object.assign(this.settings, s);
+    } catch (_) {
+      try {
+        const s = BdApi.getData("FriendActivityTimeline", "settings");
+        if (s && typeof s === "object") Object.assign(this.settings, s);
+      } catch (_) {}
+    }
   }
 
   save() {
-    BdApi.saveData("FriendActivityTimeline", "settings", this.settings);
+    try {
+      BdApi.Data.save("FriendActivityTimeline", "settings", this.settings);
+    } catch (_) {
+      try { BdApi.saveData("FriendActivityTimeline", "settings", this.settings); } catch (_) {}
+    }
   }
 
   start() {
     this.load();
     this.injectCSS();
     this.buildOverlay();
+    this.addToggleBtn();
     this.startPolling();
-    this.addToggleButton();
   }
 
   stop() {
     this.stopPolling();
-    this.removeOverlay();
-    this.removeToggleButton();
-    BdApi.clearCSS("FriendActivityTimeline");
+    document.removeEventListener("mousemove", this._onMouseMove);
+    document.removeEventListener("mouseup",   this._onMouseUp);
+    const overlay = document.getElementById("fat-overlay");
+    if (overlay) overlay.remove();
+    const btn = document.getElementById("fat-toggle");
+    if (btn) btn.remove();
+    try { BdApi.DOM.removeStyle("FriendActivityTimeline"); }
+    catch (_) { try { BdApi.clearCSS("FriendActivityTimeline"); } catch (_) {} }
   }
 
-  getRelStore()    { return BdApi.findModuleByProps("getRelationships", "getFriendIDs"); }
-  getUserStore()   { return BdApi.findModuleByProps("getUser", "getCurrentUser"); }
-  getPresStore()   { return BdApi.findModuleByProps("getStatus", "getActivities"); }
-  getVoiceStore()  { return BdApi.findModuleByProps("getVoiceStates", "getVoiceStateForUser"); }
+  
+  findModule(props) {
+    try { return BdApi.Webpack.getModule(BdApi.Webpack.Filters.byProps(...props)); } catch (_) {}
+    try { return BdApi.findModuleByProps(...props); } catch (_) {}
+    return null;
+  }
 
+  getRelStore()   { return this.findModule(["getFriendIDs", "getRelationships"]); }
+  getUserStore()  { return this.findModule(["getUser", "getCurrentUser"]); }
+  getPresStore()  { return this.findModule(["getStatus", "getActivities"]); }
+  getVoiceStore() { return this.findModule(["getVoiceStateForUser", "getVoiceStates"]); }
+
+  
   startPolling() {
     this.poll();
     this.pollTimer = setInterval(() => this.poll(), this.POLL_MS);
   }
 
   stopPolling() {
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
   }
 
   poll() {
     try {
-      const relStore  = this.getRelStore();
-      const userStore = this.getUserStore();
-      const presStore = this.getPresStore();
-      const voiceStore= this.getVoiceStore();
+      const relStore   = this.getRelStore();
+      const userStore  = this.getUserStore();
+      const presStore  = this.getPresStore();
+      const voiceStore = this.getVoiceStore();
       if (!relStore || !userStore || !presStore) return;
 
-      const friendIds = relStore.getFriendIDs ? relStore.getFriendIDs() : [];
+      const ids = (relStore.getFriendIDs && relStore.getFriendIDs()) ||
+                  Object.keys(relStore.getRelationships ? relStore.getRelationships() : {})
+                    .filter(id => relStore.getRelationships()[id] === 1);
 
-      friendIds.forEach(id => {
-        const user = userStore.getUser(id);
-        if (!user) return;
-        const name = user.globalName || user.username;
-        const avatar = user.avatar
-          ? "https://cdn.discordapp.com/avatars/" + id + "/" + user.avatar + ".png?size=32"
-          : "https://cdn.discordapp.com/embed/avatars/" + (parseInt(id) % 5) + ".png";
+      ids.forEach(id => {
+        try {
+          const user = userStore.getUser(id);
+          if (!user) return;
 
-        const prev = this.snapshots.get(id) || {};
-        const status    = presStore.getStatus ? presStore.getStatus(id) : null;
-        const activities= presStore.getActivities ? presStore.getActivities(id) : [];
-        const game      = activities.find(a => a.type === 0);
-        const stream    = activities.find(a => a.type === 1);
-        const vsState   = voiceStore && voiceStore.getVoiceStateForUser ? voiceStore.getVoiceStateForUser(id) : null;
-        const voiceCh   = vsState ? vsState.channelId : null;
+          const name   = user.globalName || user.username || "Unknown";
+          const avatar = user.avatar
+            ? "https://cdn.discordapp.com/avatars/" + id + "/" + user.avatar + ".png?size=32"
+            : "https://cdn.discordapp.com/embed/avatars/" + (Number(BigInt(id) % 5n)) + ".png";
 
-        if (this.settings.showStatus && status && status !== prev.status) {
-          if (prev.status !== undefined) this.push({ type: "status", name, avatar, status, id });
-        }
+          const prev       = this.snapshots.get(id) || {};
+          const status     = presStore.getStatus ? presStore.getStatus(id) : null;
+          const activities = presStore.getActivities ? presStore.getActivities(id) : [];
+          const game       = activities.find(a => a.type === 0);
+          const stream     = activities.find(a => a.type === 1);
+          const vsRaw      = voiceStore && voiceStore.getVoiceStateForUser
+                               ? voiceStore.getVoiceStateForUser(id) : null;
+          const voiceCh    = vsRaw ? (vsRaw.channelId || vsRaw.channel_id || null) : null;
+          const gameName   = game   ? (game.name   || null) : null;
+          const streaming  = !!stream;
 
-        if (this.settings.showGames) {
-          const gameName = game ? game.name : null;
-          if (gameName !== prev.game) {
-            if (gameName) this.push({ type: "game_start", name, avatar, game: gameName, id });
-            else if (prev.game) this.push({ type: "game_stop", name, avatar, game: prev.game, id });
+          if (this.settings.showStatus && status !== undefined && status !== prev.status && prev.status !== undefined) {
+            this.push({ type: "status", name, avatar, status });
           }
-        }
+          if (this.settings.showGames) {
+            if (gameName && gameName !== prev.game) this.push({ type: "game_start", name, avatar, game: gameName });
+            else if (!gameName && prev.game)        this.push({ type: "game_stop",  name, avatar, game: prev.game });
+          }
+          if (this.settings.showStreams) {
+            if (streaming  && !prev.streaming) this.push({ type: "stream_start", name, avatar });
+            if (!streaming &&  prev.streaming) this.push({ type: "stream_stop",  name, avatar });
+          }
+          if (this.settings.showVoice) {
+            if (voiceCh  && voiceCh !== prev.voiceCh) this.push({ type: "voice_join",  name, avatar });
+            if (!voiceCh && prev.voiceCh)              this.push({ type: "voice_leave", name, avatar });
+          }
 
-        if (this.settings.showStreams) {
-          const isStreaming = !!stream;
-          if (isStreaming && !prev.streaming) this.push({ type: "stream_start", name, avatar, id });
-          else if (!isStreaming && prev.streaming) this.push({ type: "stream_stop", name, avatar, id });
-        }
-
-        if (this.settings.showVoice) {
-          if (voiceCh && voiceCh !== prev.voiceCh) this.push({ type: "voice_join", name, avatar, id });
-          else if (!voiceCh && prev.voiceCh) this.push({ type: "voice_leave", name, avatar, id });
-        }
-
-        this.snapshots.set(id, { status, game: game ? game.name : null, streaming: !!stream, voiceCh });
+          this.snapshots.set(id, { status, game: gameName, streaming, voiceCh });
+        } catch (_) {}
       });
-    } catch (e) {}
+    } catch (_) {}
   }
 
-  push(event) {
-    event.ts = Date.now();
-    this.events.unshift(event);
+  push(ev) {
+    ev.ts = Date.now();
+    this.events.unshift(ev);
     if (this.events.length > this.maxEvents) this.events.pop();
     this.renderFeed();
+    this.updateFooter();
   }
 
+  
   label(e) {
-    const icons = {
-      status:       { online: ["🟢", "came online"], idle: ["🌙", "went idle"], dnd: ["🔴", "set DND"], offline: ["⚫", "went offline"] },
-      game_start:   ["🎮", "started playing " + e.game],
-      game_stop:    ["🎮", "stopped playing " + e.game],
-      stream_start: ["📡", "started streaming"],
-      stream_stop:  ["📡", "stopped streaming"],
-      voice_join:   ["🔊", "joined voice"],
-      voice_leave:  ["🔇", "left voice"],
-    };
     if (e.type === "status") {
-      const s = icons.status[e.status] || ["⚪", "changed status to " + e.status];
-      return { icon: s[0], text: s[1] };
+      const m = { online: ["🟢","came online"], idle: ["🌙","went idle"], dnd: ["🔴","set DND"], offline: ["⚫","went offline"] };
+      const s = m[e.status] || ["⚪", "changed status"];
+      return s[0] + " " + s[1];
     }
-    const s = icons[e.type] || ["•", e.type];
-    return { icon: s[0], text: s[1] };
+    const m = {
+      game_start:   "🎮 started playing " + e.game,
+      game_stop:    "🎮 stopped playing " + e.game,
+      stream_start: "📡 started streaming",
+      stream_stop:  "📡 stopped streaming",
+      voice_join:   "🔊 joined voice",
+      voice_leave:  "🔇 left voice",
+    };
+    return m[e.type] || e.type;
   }
 
   timeAgo(ts) {
     const s = Math.floor((Date.now() - ts) / 1000);
-    if (s < 60)  return s + "s ago";
-    if (s < 3600) return Math.floor(s/60) + "m ago";
-    return Math.floor(s/3600) + "h ago";
+    if (s < 60)   return s + "s";
+    if (s < 3600) return Math.floor(s / 60) + "m";
+    return Math.floor(s / 3600) + "h";
+  }
+
+  esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
   renderFeed() {
     const feed = document.getElementById("fat-feed");
     if (!feed) return;
-    const slice = this.events.slice(0, this.settings.maxItems);
-    if (slice.length === 0) {
-      feed.innerHTML = "<div class='fat-empty'>No activity yet\u2026<br><span>Waiting for friends to do stuff</span></div>";
+    if (!this.events.length) {
+      feed.innerHTML = "<div class='fat-empty'>No activity yet<br><small>Waiting for friends\u2026</small></div>";
       return;
     }
-    feed.innerHTML = slice.map((e, i) => {
-      const { icon, text } = this.label(e);
-      return (
-        "<div class='fat-row' style='animation-delay:" + (i * 0.03) + "s'>" +
-          "<img class='fat-avatar' src='" + e.avatar + "' onerror=\"this.src='https://cdn.discordapp.com/embed/avatars/0.png'\">" +
-          "<div class='fat-info'>" +
-            "<span class='fat-name'>" + this.esc(e.name) + "</span>" +
-            "<span class='fat-action'>" + icon + " " + this.esc(text) + "</span>" +
-          "</div>" +
-          "<span class='fat-time'>" + this.timeAgo(e.ts) + "</span>" +
-        "</div>"
-      );
-    }).join("");
-  }
-
-  esc(s) {
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  }
-
-  buildOverlay() {
-    const old = document.getElementById("fat-overlay");
-    if (old) old.remove();
-
-    const W = 300, H = 420;
-    const x = this.settings.x !== null ? this.settings.x : window.innerWidth  - W - 20;
-    const y = this.settings.y !== null ? this.settings.y : window.innerHeight - H - 60;
-
-    const overlay = document.createElement("div");
-    overlay.id = "fat-overlay";
-    overlay.style.cssText = "left:" + x + "px;top:" + y + "px;opacity:" + (this.settings.opacity/100) + ";";
-
-    overlay.innerHTML = (
-      "<div id='fat-header'>" +
-        "<div id='fat-title'><span id='fat-pulse'></span>Friend Activity</div>" +
-        "<div id='fat-controls'>" +
-          "<button class='fat-btn' id='fat-clear' title='Clear'>&#10005;</button>" +
-          "<button class='fat-btn' id='fat-hide'  title='Hide'>\u2212</button>" +
+    feed.innerHTML = this.events.slice(0, 40).map((e, i) =>
+      "<div class='fat-row' style='animation-delay:" + (i * 0.025) + "s'>" +
+        "<img class='fat-av' src='" + this.esc(e.avatar) + "' onerror=\"this.src='https://cdn.discordapp.com/embed/avatars/0.png'\">" +
+        "<div class='fat-info'>" +
+          "<span class='fat-name'>" + this.esc(e.name) + "</span>" +
+          "<span class='fat-act'>"  + this.esc(this.label(e)) + "</span>" +
         "</div>" +
-      "</div>" +
-      "<div id='fat-feed'><div class='fat-empty'>No activity yet\u2026<br><span>Waiting for friends to do stuff</span></div></div>" +
-      "<div id='fat-footer'>" +
-        "<span id='fat-count'>0 events</span>" +
-        "<span id='fat-refresh'>Live \u2022 " + (this.POLL_MS/1000) + "s</span>" +
+        "<span class='fat-time'>" + this.timeAgo(e.ts) + " ago</span>" +
       "</div>"
-    );
-
-    document.body.appendChild(overlay);
-
-    overlay.querySelector("#fat-header").addEventListener("mousedown", (e) => {
-      if (e.target.classList.contains("fat-btn")) return;
-      this.dragging = true;
-      const rect = overlay.getBoundingClientRect();
-      this.dragOffX = e.clientX - rect.left;
-      this.dragOffY = e.clientY - rect.top;
-      overlay.style.transition = "none";
-      e.preventDefault();
-    });
-
-    document.addEventListener("mousemove", (e) => {
-      if (!this.dragging) return;
-      const nx = Math.max(0, Math.min(window.innerWidth  - overlay.offsetWidth,  e.clientX - this.dragOffX));
-      const ny = Math.max(0, Math.min(window.innerHeight - overlay.offsetHeight, e.clientY - this.dragOffY));
-      overlay.style.left = nx + "px";
-      overlay.style.top  = ny + "px";
-    });
-
-    document.addEventListener("mouseup", () => {
-      if (!this.dragging) return;
-      this.dragging = false;
-      overlay.style.transition = "";
-      const rect = overlay.getBoundingClientRect();
-      this.settings.x = Math.round(rect.left);
-      this.settings.y = Math.round(rect.top);
-      this.save();
-    });
-
-    overlay.querySelector("#fat-clear").addEventListener("click", () => {
-      this.events = [];
-      this.renderFeed();
-      this.updateFooter();
-    });
-
-    overlay.querySelector("#fat-hide").addEventListener("click", () => {
-      const feed   = document.getElementById("fat-feed");
-      const footer = document.getElementById("fat-footer");
-      const btn    = document.getElementById("fat-hide");
-      const collapsed = feed.style.display === "none";
-      feed.style.display   = collapsed ? "" : "none";
-      footer.style.display = collapsed ? "" : "none";
-      btn.innerHTML = collapsed ? "\u2212" : "\u25A1";
-    });
-
-    setInterval(() => this.updateFooter(), 10000);
-    this.updateFooter();
+    ).join("");
   }
 
   updateFooter() {
     const el = document.getElementById("fat-count");
     if (el) el.textContent = this.events.length + " event" + (this.events.length !== 1 ? "s" : "");
-    const feed = document.getElementById("fat-feed");
-    if (feed && this.events.length > 0) {
-      feed.querySelectorAll(".fat-time").forEach((el, i) => {
-        if (this.events[i]) el.textContent = this.timeAgo(this.events[i].ts);
-      });
-    }
+    document.querySelectorAll(".fat-time").forEach((el, i) => {
+      if (this.events[i]) el.textContent = this.timeAgo(this.events[i].ts) + " ago";
+    });
   }
 
-  removeOverlay() {
+  
+  buildOverlay() {
+    const old = document.getElementById("fat-overlay");
+    if (old) old.remove();
+
+    const W = 300;
+    const x = this.settings.x !== null ? this.settings.x : window.innerWidth  - W - 20;
+    const y = this.settings.y !== null ? this.settings.y : Math.max(60, window.innerHeight - 440);
+
+    const el = document.createElement("div");
+    el.id = "fat-overlay";
+    el.style.left    = x + "px";
+    el.style.top     = y + "px";
+    el.style.opacity = this.settings.opacity / 100;
+    el.innerHTML =
+      "<div id='fat-header'>" +
+        "<div id='fat-title'><i id='fat-dot'></i>Friend Activity</div>" +
+        "<div id='fat-btns'>" +
+          "<button class='fat-btn' id='fat-min'>\u2212</button>" +
+          "<button class='fat-btn' id='fat-clr'>\u2715</button>" +
+        "</div>" +
+      "</div>" +
+      "<div id='fat-feed'><div class='fat-empty'>No activity yet<br><small>Waiting for friends\u2026</small></div></div>" +
+      "<div id='fat-foot'><span id='fat-count'>0 events</span><span class='fat-live'>&#9679; live</span></div>";
+
+    document.body.appendChild(el);
+
+    el.querySelector("#fat-header").addEventListener("mousedown", ev => {
+      if (ev.target.classList.contains("fat-btn")) return;
+      this.dragging = true;
+      const r = el.getBoundingClientRect();
+      this.dragOffX = ev.clientX - r.left;
+      this.dragOffY = ev.clientY - r.top;
+      ev.preventDefault();
+    });
+    document.addEventListener("mousemove", this._onMouseMove);
+    document.addEventListener("mouseup",   this._onMouseUp);
+
+    el.querySelector("#fat-clr").addEventListener("click", () => {
+      this.events = []; this.renderFeed(); this.updateFooter();
+    });
+
+    let collapsed = false;
+    el.querySelector("#fat-min").addEventListener("click", () => {
+      collapsed = !collapsed;
+      document.getElementById("fat-feed").style.display = collapsed ? "none" : "";
+      document.getElementById("fat-foot").style.display = collapsed ? "none" : "";
+      el.querySelector("#fat-min").textContent = collapsed ? "\u25a1" : "\u2212";
+    });
+
+    setInterval(() => this.updateFooter(), 15000);
+  }
+
+  _onMouseMove(ev) {
+    if (!this.dragging) return;
     const el = document.getElementById("fat-overlay");
-    if (el) el.remove();
+    if (!el) return;
+    const nx = Math.max(0, Math.min(window.innerWidth  - el.offsetWidth,  ev.clientX - this.dragOffX));
+    const ny = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, ev.clientY - this.dragOffY));
+    el.style.left = nx + "px";
+    el.style.top  = ny + "px";
   }
 
-  addToggleButton() {
+  _onMouseUp() {
+    if (!this.dragging) return;
+    this.dragging = false;
+    const el = document.getElementById("fat-overlay");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    this.settings.x = Math.round(r.left);
+    this.settings.y = Math.round(r.top);
+    this.save();
+  }
+
+  addToggleBtn() {
     const old = document.getElementById("fat-toggle");
     if (old) old.remove();
     const btn = document.createElement("div");
     btn.id = "fat-toggle";
     btn.title = "Friend Activity Timeline";
-    btn.innerHTML = "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='12' cy='8' r='4'/><path d='M4 20c0-4 3.6-7 8-7s8 3 8 7'/></svg>";
+    btn.innerHTML = "<svg width='18' height='18' viewBox='0 0 24 24' fill='currentColor'><path d='M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z'/></svg>";
     btn.addEventListener("click", () => {
-      const overlay = document.getElementById("fat-overlay");
-      if (!overlay) return this.buildOverlay();
-      overlay.style.display = overlay.style.display === "none" ? "" : "none";
+      const ov = document.getElementById("fat-overlay");
+      if (!ov) { this.buildOverlay(); return; }
+      ov.style.display = ov.style.display === "none" ? "" : "none";
     });
-    const toolbar = document.querySelector("[class*='toolbar']") || document.querySelector("[class*='guilds']");
-    if (toolbar) toolbar.prepend(btn);
-    else document.body.appendChild(btn);
+    const anchor =
+      document.querySelector("[class*='panels-']")   ||
+      document.querySelector("[class*='toolbar-']")  ||
+      document.querySelector("[class*='guilds-']")   ||
+      document.body;
+    anchor.appendChild(btn);
   }
 
-  removeToggleButton() {
-    const el = document.getElementById("fat-toggle");
-    if (el) el.remove();
-  }
-
+  
   injectCSS() {
-    BdApi.injectCSS("FriendActivityTimeline", `
-      #fat-overlay {
-        position: fixed;
-        width: 300px;
-        background: rgba(10, 10, 14, 0.93);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 12px;
-        box-shadow: 0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04) inset;
-        z-index: 9999;
-        font-family: 'gg sans', 'Noto Sans', sans-serif;
-        overflow: hidden;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        transition: box-shadow 0.2s, opacity 0.2s;
-        user-select: none;
-      }
-      #fat-overlay:hover {
-        box-shadow: 0 28px 70px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.08) inset;
-      }
-      #fat-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px 12px 9px;
-        cursor: grab;
-        background: rgba(255,255,255,0.03);
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-      }
-      #fat-header:active { cursor: grabbing; }
-      #fat-title {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1.2px;
-        color: rgba(255,255,255,0.5);
-      }
-      #fat-pulse {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #3ba55d;
-        box-shadow: 0 0 8px #3ba55d;
-        animation: fat-pulse 2s ease-in-out infinite;
-      }
-      @keyframes fat-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
-      #fat-controls { display: flex; gap: 4px; }
-      .fat-btn {
-        background: rgba(255,255,255,0.06);
-        border: none;
-        border-radius: 4px;
-        color: rgba(255,255,255,0.4);
-        cursor: pointer;
-        font-size: 11px;
-        width: 22px;
-        height: 22px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.15s, color 0.15s;
-        padding: 0;
-      }
-      .fat-btn:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); }
-      #fat-feed {
-        max-height: 340px;
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding: 6px 0;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255,255,255,0.1) transparent;
-      }
-      #fat-feed::-webkit-scrollbar { width: 4px; }
-      #fat-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-      .fat-empty {
-        padding: 28px 16px;
-        text-align: center;
-        color: rgba(255,255,255,0.2);
-        font-size: 12px;
-        line-height: 1.8;
-      }
-      .fat-empty span { font-size: 11px; opacity: 0.6; }
-      .fat-row {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        padding: 6px 12px;
-        transition: background 0.12s;
-        animation: fat-slide 0.25s ease both;
-        cursor: default;
-      }
-      @keyframes fat-slide { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
-      .fat-row:hover { background: rgba(255,255,255,0.04); }
-      .fat-avatar {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        object-fit: cover;
-        flex-shrink: 0;
-        border: 1px solid rgba(255,255,255,0.08);
-      }
-      .fat-info {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-      }
-      .fat-name {
-        font-size: 12px;
-        font-weight: 700;
-        color: rgba(255,255,255,0.85);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .fat-action {
-        font-size: 11px;
-        color: rgba(255,255,255,0.38);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .fat-time {
-        font-size: 10px;
-        color: rgba(255,255,255,0.2);
-        white-space: nowrap;
-        flex-shrink: 0;
-      }
-      #fat-footer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 6px 12px;
-        border-top: 1px solid rgba(255,255,255,0.06);
-        background: rgba(255,255,255,0.02);
-      }
-      #fat-count { font-size: 10px; color: rgba(255,255,255,0.2); }
-      #fat-refresh { font-size: 10px; color: rgba(59,165,93,0.5); }
-      #fat-toggle {
-        position: fixed;
-        bottom: 72px;
-        left: 12px;
-        width: 36px;
-        height: 36px;
-        background: rgba(10,10,14,0.9);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        z-index: 9998;
-        color: rgba(255,255,255,0.4);
-        transition: background 0.15s, color 0.15s, border-color 0.15s;
-        backdrop-filter: blur(10px);
-      }
-      #fat-toggle:hover { background: rgba(59,165,93,0.2); color: #3ba55d; border-color: rgba(59,165,93,0.4); }
-    `);
+    const css = [
+      "#fat-overlay{position:fixed;width:300px;background:rgba(10,10,14,.94);border:1px solid rgba(255,255,255,.07);",
+      "border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.75);z-index:9000;overflow:hidden;",
+      "font-family:'gg sans','Noto Sans',sans-serif;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);}",
+
+      "#fat-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;",
+      "cursor:grab;background:rgba(255,255,255,.03);border-bottom:1px solid rgba(255,255,255,.06);}",
+      "#fat-header:active{cursor:grabbing;}",
+
+      "#fat-title{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;",
+      "text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,.45);}",
+
+      "#fat-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#3ba55d;",
+      "box-shadow:0 0 7px #3ba55d;animation:fat-pulse 2s ease-in-out infinite;flex-shrink:0;}",
+      "@keyframes fat-pulse{0%,100%{opacity:1}50%{opacity:.4}}",
+
+      "#fat-btns{display:flex;gap:4px;}",
+      ".fat-btn{background:rgba(255,255,255,.06);border:none;border-radius:4px;color:rgba(255,255,255,.4);",
+      "cursor:pointer;width:22px;height:22px;font-size:12px;display:flex;align-items:center;",
+      "justify-content:center;padding:0;transition:background .15s,color .15s;}",
+      ".fat-btn:hover{background:rgba(255,255,255,.13);color:#fff;}",
+
+      "#fat-feed{max-height:340px;overflow-y:auto;overflow-x:hidden;padding:5px 0;",
+      "scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.08) transparent;}",
+      "#fat-feed::-webkit-scrollbar{width:3px;}",
+      "#fat-feed::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:2px;}",
+
+      ".fat-empty{padding:30px 16px;text-align:center;color:rgba(255,255,255,.18);font-size:12px;line-height:2;}",
+      ".fat-empty small{font-size:11px;opacity:.7;}",
+
+      ".fat-row{display:flex;align-items:center;gap:9px;padding:6px 12px;",
+      "animation:fat-in .22s ease both;transition:background .1s;}",
+      ".fat-row:hover{background:rgba(255,255,255,.04);}",
+      "@keyframes fat-in{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}",
+
+      ".fat-av{width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;",
+      "border:1px solid rgba(255,255,255,.08);}",
+
+      ".fat-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}",
+      ".fat-name{font-size:12px;font-weight:700;color:rgba(255,255,255,.82);",
+      "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".fat-act{font-size:11px;color:rgba(255,255,255,.36);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".fat-time{font-size:10px;color:rgba(255,255,255,.18);white-space:nowrap;flex-shrink:0;}",
+
+      "#fat-foot{display:flex;align-items:center;justify-content:space-between;padding:5px 12px;",
+      "border-top:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.02);}",
+      "#fat-count{font-size:10px;color:rgba(255,255,255,.18);}",
+      ".fat-live{font-size:10px;color:rgba(59,165,93,.45);}",
+
+      "#fat-toggle{position:fixed;bottom:68px;left:8px;width:34px;height:34px;",
+      "background:rgba(10,10,14,.88);border:1px solid rgba(255,255,255,.09);border-radius:8px;",
+      "display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:8999;",
+      "color:rgba(255,255,255,.35);transition:all .15s;backdrop-filter:blur(8px);}",
+      "#fat-toggle:hover{background:rgba(59,165,93,.18);color:#3ba55d;border-color:rgba(59,165,93,.35);}",
+    ].join("");
+
+    try { BdApi.DOM.addStyle("FriendActivityTimeline", css); }
+    catch (_) { try { BdApi.injectCSS("FriendActivityTimeline", css); } catch (_) {} }
   }
 
+  
   getSettingsPanel() {
     const wrap = document.createElement("div");
     wrap.style.cssText = "padding:16px;color:var(--text-normal);font-family:var(--font-primary);max-width:460px;";
 
-    const section = (t) => {
+    const sec = t => {
       const el = document.createElement("div");
       el.textContent = t;
-      el.style.cssText = "font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#3ba55d;margin:16px 0 8px;border-bottom:1px solid rgba(59,165,93,.25);padding-bottom:4px;";
+      el.style.cssText = "font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;" +
+        "color:#3ba55d;margin:16px 0 8px;border-bottom:1px solid rgba(59,165,93,.2);padding-bottom:4px;";
       wrap.appendChild(el);
     };
 
-    const toggle = (label, key) => {
+    const tog = (label, key) => {
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;";
       const lbl = document.createElement("span");
-      lbl.textContent = label;
-      lbl.style.fontSize = "14px";
+      lbl.textContent = label; lbl.style.fontSize = "14px";
       const btn = document.createElement("button");
-      const refresh = () => {
-        btn.textContent = this.settings[key] ? "ON" : "OFF";
-        btn.style.background = this.settings[key] ? "#3ba55d" : "#555";
-      };
+      const refresh = () => { btn.textContent = this.settings[key] ? "ON" : "OFF"; btn.style.background = this.settings[key] ? "#3ba55d" : "#555"; };
       btn.style.cssText = "padding:4px 14px;border:none;border-radius:3px;cursor:pointer;font-weight:700;font-size:12px;color:#fff;";
       refresh();
       btn.addEventListener("click", () => { this.settings[key] = !this.settings[key]; this.save(); refresh(); });
       row.appendChild(lbl); row.appendChild(btn); wrap.appendChild(row);
     };
 
-    section("Activity Types");
-    toggle("Games played / stopped", "showGames");
-    toggle("Status changes", "showStatus");
-    toggle("Voice channel joins / leaves", "showVoice");
-    toggle("Streams started / stopped", "showStreams");
+    sec("Activity Types");
+    tog("Games played / stopped", "showGames");
+    tog("Status changes", "showStatus");
+    tog("Voice channel joins / leaves", "showVoice");
+    tog("Streams started / stopped", "showStreams");
 
-    section("Display");
+    sec("Display");
     const opRow = document.createElement("div");
     opRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;";
-    const opLbl = document.createElement("span");
-    opLbl.textContent = "Opacity";
-    opLbl.style.fontSize = "14px";
-    const opVal = document.createElement("span");
-    opVal.textContent = this.settings.opacity + "%";
+    const opLbl = document.createElement("span"); opLbl.textContent = "Opacity"; opLbl.style.fontSize = "14px";
+    const opVal = document.createElement("span"); opVal.textContent = this.settings.opacity + "%";
     opVal.style.cssText = "font-size:12px;color:#3ba55d;min-width:36px;text-align:right;";
-    const opSlider = document.createElement("input");
-    opSlider.type = "range"; opSlider.min = 20; opSlider.max = 100; opSlider.value = this.settings.opacity;
-    opSlider.style.cssText = "width:120px;accent-color:#3ba55d;";
-    opSlider.addEventListener("input", () => {
-      this.settings.opacity = parseInt(opSlider.value);
+    const slider = document.createElement("input");
+    slider.type = "range"; slider.min = 20; slider.max = 100; slider.value = this.settings.opacity;
+    slider.style.cssText = "width:120px;accent-color:#3ba55d;";
+    slider.addEventListener("input", () => {
+      this.settings.opacity = parseInt(slider.value);
       opVal.textContent = this.settings.opacity + "%";
-      const overlay = document.getElementById("fat-overlay");
-      if (overlay) overlay.style.opacity = this.settings.opacity / 100;
+      const ov = document.getElementById("fat-overlay");
+      if (ov) ov.style.opacity = this.settings.opacity / 100;
       this.save();
     });
     const opRight = document.createElement("div");
     opRight.style.cssText = "display:flex;align-items:center;gap:8px;";
-    opRight.appendChild(opSlider); opRight.appendChild(opVal);
-    opRow.appendChild(opLbl); opRow.appendChild(opRight);
-    wrap.appendChild(opRow);
+    opRight.appendChild(slider); opRight.appendChild(opVal);
+    opRow.appendChild(opLbl); opRow.appendChild(opRight); wrap.appendChild(opRow);
 
     const resetBtn = document.createElement("button");
     resetBtn.textContent = "Reset Position";
-    resetBtn.style.cssText = "margin-top:4px;padding:7px 14px;background:rgba(255,255,255,0.07);color:var(--text-normal);border:1px solid rgba(255,255,255,0.1);border-radius:4px;cursor:pointer;font-size:13px;";
+    resetBtn.style.cssText = "padding:7px 14px;background:rgba(255,255,255,.07);color:var(--text-normal);" +
+      "border:1px solid rgba(255,255,255,.1);border-radius:4px;cursor:pointer;font-size:13px;margin-top:4px;";
     resetBtn.addEventListener("click", () => {
       this.settings.x = null; this.settings.y = null; this.save();
-      this.removeOverlay(); this.buildOverlay();
-      BdApi.showToast("Position reset.", { type: "info" });
+      const ov = document.getElementById("fat-overlay"); if (ov) ov.remove();
+      this.buildOverlay();
+      try { BdApi.UI.showToast("Position reset.", { type: "info" }); }
+      catch (_) { try { BdApi.showToast("Position reset.", { type: "info" }); } catch (_) {} }
     });
     wrap.appendChild(resetBtn);
-
     return wrap;
   }
 };
