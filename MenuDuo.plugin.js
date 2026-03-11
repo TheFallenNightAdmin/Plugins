@@ -2,7 +2,7 @@
  * @name DiscordMenu
  * @author pagoni meow
  * @description Music player (Alt + M) + Theme switcher (Esc) in one plugin.
- * @version 1.0.3
+ * @version 1.0.4
  */
 
 module.exports = (() => {
@@ -178,13 +178,12 @@ module.exports = (() => {
             });
             this._tsObserver.observe(document.body, { childList: true, subtree: false });
 
-            // Only re-apply a previously saved theme; never randomly switch on load
             if (this._activeName) {
                 const themes = this._getThemes();
                 if (themes.find(t => t.name === this._activeName)) {
                     this._applyTheme(this._activeName, true);
                 } else {
-                    // saved theme no longer exists, clear it
+                    
                     this._activeName = null;
                     try { BdApi.Data.save('DiscordMenu','activeName', null); } catch(e) {}
                 }
@@ -253,7 +252,7 @@ module.exports = (() => {
                 try { BdApi.Data.save('DiscordMenu','activeName', null); } catch(e) {}
                 this._syncUI(); return;
             }
-            // Disable all others first, then enable the chosen one
+
             themes.forEach(t => {
                 try {
                     if (t.name === name) BdApi.Themes.enable(t.name);
