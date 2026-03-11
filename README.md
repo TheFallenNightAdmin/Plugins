@@ -1,120 +1,109 @@
-# 🎵 MusicMenu
+# MenuDuo
+**by pagoni meow**
 
-> A floating music player plugin for BetterDiscord. Search and play YouTube and SoundCloud tracks directly inside Discord — no external apps, no switching windows.
-
-**by pagoni meow** • v1.0.0 • No dependencies required
-
----
-
-## What Is It?
-
-MusicMenu adds a sleek draggable music panel to Discord. Type a search term or paste a URL, hit play, and your music starts right inside your client. Supports a queue system so you can line up multiple tracks and cycle through them while you chat.
+A BetterDiscord plugin that puts a music player and a theme switcher into Discord without getting in the way. Two things most people end up wanting separate plugins for — this does both, and they actually work together without breaking each other.
 
 ---
 
-## Features
+## What it does
 
-### 🎬 YouTube Playback
-- Paste any YouTube URL or video ID to load it instantly
-- Or just type a search term — MusicMenu finds the first result automatically
-- Full embedded player with native YouTube controls
-- No API key required
+### Music Player (MusicMenu)
+A floating panel you can drag anywhere on screen. Supports YouTube and SoundCloud. You can search by name or paste a direct URL for either — it'll figure out which one you mean. Tracks get added to a queue so you can line up multiple things and skip through them. Volume is saved between sessions so you're not adjusting it every time you open Discord.
 
-### 🔊 SoundCloud Playback
-- Paste any public SoundCloud track URL to load it in the official SoundCloud widget
-- Or search by name — MusicMenu finds the first matching track
-- Autoplay on load
+The panel adapts its colors to whatever Discord theme you currently have active, so it never looks out of place.
 
-### 📋 Queue System
-- Every search adds a track to your queue
-- Click any queued track to jump to it
-- ⏮ ⏭ buttons to cycle through the queue
-- ✕ button on each track to remove it individually
+### Theme Switcher
+A fullscreen overlay that lists every theme you have installed in BetterDiscord. Click one to apply it, click the active one again to turn it off. Has a search bar so you can filter if you've got a lot installed. Your last used theme is remembered and restored when you restart Discord.
 
-### 🎚️ Volume Control
-- Slider controls YouTube playback volume
-- Setting saves between Discord restarts
+There's also a small pill indicator in the bottom-left corner that shows you which theme is currently active at a glance.
 
-### 🪟 Floating Draggable Panel
-- Drag anywhere on screen by the header
-- Position saves and restores automatically
-- Collapse to just the title bar with the − button
-- Hide/show with the music note toggle button in the sidebar
+---
+
+## Keybinds
+
+| Key | What it does |
+|-----|-------------|
+| `Alt + M` | Toggle the music panel open/closed |
+| `Esc` | Open/close the theme switcher |
+
+The `Alt+M` combo was chosen specifically because it doesn't interfere with typing. You can hit it while focused in the message box and it won't do anything weird to your message.
+
+`Esc` to open the theme switcher only fires if there's no modal, popout, or layer already open — so it won't fight with Discord's own Esc behavior when you're closing something else.
 
 ---
 
 ## Installation
 
-1. Install [BetterDiscord](https://betterdiscord.app) if you haven't already
-2. Download [`MusicMenu.plugin.js`](./MusicMenu.plugin.js)
-3. Drop it into your BetterDiscord plugins folder:
+1. Make sure you have [BetterDiscord](https://betterdiscord.app/) installed
+2. Download `MenuDuo_plugin.js`
+3. Open BetterDiscord Settings → Plugins → click the folder icon to open your plugins folder
+4. Drop the file in there
+5. Flip the toggle to enable it
 
-| OS | Path |
-|----|------|
-| Windows | `%AppData%\BetterDiscord\plugins\` |
-| macOS | `~/Library/Application Support/BetterDiscord/plugins/` |
-| Linux | `~/.config/BetterDiscord/plugins/` |
-
-4. Open Discord → Settings → Plugins → enable **MusicMenu**
-5. The panel appears in the bottom-right corner. A music note icon is added to the left sidebar to toggle it.
+That's it. No dependencies, no extra setup.
 
 ---
 
-## Usage
+## Music Player — Details
 
-### Playing a YouTube track
-```
-1. Click the YouTube tab
-2. Paste a URL like https://www.youtube.com/watch?v=dQw4w9WgXcQ
-   OR type a search term like:  lofi hip hop
-3. Hit Enter or click ▶
-```
+**Supported sources:**
+- YouTube (search by name, or paste a `youtube.com/watch?v=`, `youtu.be/`, or embed URL)
+- SoundCloud (search by name, or paste a full `soundcloud.com/` track URL)
 
-### Playing a SoundCloud track
-```
-1. Click the SoundCloud tab
-2. Paste a URL like https://soundcloud.com/artist/trackname
-   OR type a search term like:  phonk mix
-3. Hit Enter or click ▶
-```
+**Controls:**
+- `⏮` — previous track in queue
+- `▶ / ⏸` — play/pause (YouTube only — SoundCloud uses its own embedded player controls)
+- `⏭` — next track in queue
+- Volume slider — adjusts YouTube playback volume, saved automatically
 
-### Queue controls
+**Queue:**
+Anything you search gets added to the bottom of the queue. Click any item in the queue to jump to it. Click the `✕` on a queue item to remove it. The currently playing track is highlighted.
 
-| Button | Action |
-|--------|--------|
-| ⏮ | Previous track in queue |
-| ▶ / ⏸ | Play / Pause (YouTube only) |
-| ⏭ | Next track in queue |
-| Track row click | Jump to that track |
-| ✕ on track | Remove from queue |
+**Panel controls:**
+- `−` button — collapses the panel to just the title bar so it takes up less space
+- `✕` button — hides the panel (bring it back with `Alt+M`)
+- Drag the title bar to reposition the panel anywhere — position is saved between sessions
+- "Reset Music Panel Position" in plugin settings snaps it back to the default position if it ends up offscreen
 
 ---
 
-## Notes
+## Theme Switcher — Details
 
-- **Search scrapes YouTube/SoundCloud directly** — no API keys, but results may occasionally miss for unusual queries. Pasting a direct URL always works.
-- **SoundCloud volume** is controlled by the widget's own internal slider, not the MusicMenu volume control (which only affects YouTube).
-- **YouTube requires an internet connection** to load the IFrame API on first use. After that it's cached by Electron.
-- The panel **does not persist your queue** between Discord restarts — it resets when Discord closes.
+Opens as a fullscreen overlay with a blurred backdrop. Lists every theme BetterDiscord knows about, whether it's enabled or not.
 
----
+- Click a theme to enable it (all others are disabled automatically)
+- Click the currently active theme to disable it entirely (resets to default Discord appearance)
+- Search bar filters the list in real time
+- The active theme's name shows in the status bar at the top of the panel and in the pill in the bottom-left corner
+- Hit `Esc` or click outside the panel to close it without changing anything
 
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| Panel doesn't appear | Make sure the plugin is enabled. Click the music note icon in the left sidebar. |
-| YouTube player shows a blank box | Wait a second for the YouTube IFrame API to load, then search again. |
-| Search returns no results | Try pasting a direct URL instead of searching by name. |
-| SoundCloud track won't play | Make sure the track is public. Private tracks can't be embedded. |
-| Panel went off-screen | Settings → Plugins → MusicMenu → Reset Panel Position. |
+Your chosen theme is saved and re-applied next time you start Discord. If a previously saved theme gets deleted/removed from your BD themes folder, it gracefully clears the saved choice instead of erroring.
 
 ---
 
-## Disclaimer
+## Plugin Settings
 
-This plugin embeds YouTube and SoundCloud content using their official public embed/widget APIs. It does not download, redistribute, or circumvent any DRM. Use in accordance with YouTube's and SoundCloud's respective terms of service.
+Found in BetterDiscord Settings → Plugins → MenuDuo → the gear icon.
+
+Only one option in there right now: **Reset Music Panel Position** — useful if you've dragged the panel somewhere and lost track of it, or if you changed monitor resolution and it ended up offscreen.
 
 ---
 
-*MusicMenu v1.0.0 — by pagoni meow*
+## Known limitations
+
+- Play/pause button only works for YouTube. SoundCloud embeds handle their own playback through the iframe, so the button does nothing when SoundCloud is active — use the controls inside the SoundCloud player itself.
+- YouTube search scrapes the results page directly, so if YouTube changes their page structure it may stop finding results. Pasting a direct URL always works as a fallback.
+- SoundCloud search works the same way. Direct URL paste is the reliable option there too.
+- The music panel colors pull from Discord's CSS variables, so if a theme does something very non-standard with its variable names the panel might fall back to default dark colors. It still works, just might not match perfectly.
+
+---
+
+## Compatibility
+
+Requires BetterDiscord. Tested on desktop (Windows). Should work fine on Mac and Linux since it's just JS running in Electron — nothing platform-specific going on under the hood.
+
+Does not conflict with other BD plugins unless something else is also intercepting `Esc` keydown events at the capture phase, which would be unusual.
+
+---
+
+*v1.0.4 — pagoni meow*
